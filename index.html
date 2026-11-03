@@ -222,7 +222,7 @@
       <b style="color:#4b5563">它是怎么判的</b><br>
       ① 有 DOI → 查 Crossref，再查 OpenAlex；两库都无此号 → 已证伪。<br>
       ② 有 DOI 但题名对不上 → 元数据有误（可能是张冠李戴）。<br>
-      ③ 无 DOI → 只按题名在开放库里找，找不到就判「无法核验」，绝不判伪造。
+      ③ 无 DOI → 只按题名在开放库里找，找不到就判「无法核验」，绝不判伪造。<br>④ 哲学经典（柏拉图 / 亚里士多德 / 康德）另查版本页码体系。
     </div>
     <div>
       <b style="color:#4b5563">为什么要这样分</b><br>
@@ -440,6 +440,26 @@ function checkFormat(raw){
   return { ok: miss.length === 0, miss };
 }
 
+// 哲学经典的版本/页码体系（哲学专业特有）
+const CLASSIC_RULES = [
+  { name: '柏拉图', std: 'Stephanus 页码', pat: /\b\d{3}\s?[a-e]\b/i, example: '514a' },
+  { name: '亚里士多德', std: 'Bekker 编号', pat: /\b\d{4}\s?[ab]\d{0,2}\b/i, example: '1094a' },
+  { name: '康德', std: 'A/B 版页码', pat: /(\bA\s?\d{1,3}\b|\bB\s?\d{1,3}\b|\bA\s?\d{1,3}\s*\/\s*B\s?\d{1,3}\b)/, example: 'A 51 / B 75' }
+];
+const CLASSIC_HINT = {
+  '柏拉图': /(柏拉图|Plato|理想国|Republic|申辩篇|Apology|斐多|Phaedo|会饮|Symposium|蒂迈欧|Timaeus)/i,
+  '亚里士多德': /(亚里士多德|Aristotle|尼各马可|Nicomachean|形而上学|Metaphysics|政治学|Politics|范畴篇)/i,
+  '康德': /(康德|Kant|纯粹理性批判|Critique of Pure Reason|实践理性批判|Critique of Practical Reason|道德形而上学奠基|Groundwork)/i
+};
+function checkClassics(text){
+  const hits = [];
+  for (const r of CLASSIC_RULES){
+    const re = CLASSIC_HINT[r.name];
+    if (re && re.test(text)) hits.push({ name: r.name, std: r.std, ok: r.pat.test(text), example: r.example });
+  }
+  return hits;
+}
+
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 function renderItem(r, idx){
@@ -458,6 +478,11 @@ function renderItem(r, idx){
       ? '<div class="flag retr">⛔ 已撤稿 —— 文献存在，但不应引用（撤稿声明见证据区）</div>'
       : ((r.flags || []).some(f => f.type === 'correction') ? '<div class="flag corr">⚠ 有更正记录 —— 引用前核对更正后的表述</div>' : '')) +
     '<div class="fmt">' + (function(){ const f = checkFormat(r.raw); return f.ok ? '格式完整性：通过（要素齐全）' : '格式完整性：缺 ' + f.miss.join('、'); })() + '</div>' +
+    (function(){
+      const c = checkClassics(r.raw);
+      if (!c.length) return '';
+      return c.map(x => '<div class="fmt" style="color:' + (x.ok ? '#1e7b52' : '#9a6400') + '">哲学经典规范：' + esc(x.name) + '需标 ' + esc(x.std) + (x.ok ? '（已标注）' : '（未标，例：' + esc(x.example) + '）') + '</div>').join('');
+    })() +
     (meta ? '<div class="meta">' + meta + '</div>' : '') +
     '<div class="reasons">' + r.reasons.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' +
     (r.evidence.length ? '<div class="evidence">' + r.evidence.map(x =>
@@ -725,7 +750,22 @@ function auditParagraph(){
     holder.appendChild(box);
   });
 
-  msg.textContent = '共 ' + sents.length + ' 句、' + citeCount + ' 处引注；其中 ' + badCount + ' 处有问题（悬空/已证伪/元数据有误）';
+  let classicWarn = 0;
+  sents.forEach((sent, si) => {
+    const c = checkClassics(sent);
+    if (!c.length) return;
+    const box = holder.children[si];
+    if (!box) return;
+    const warn = c.filter(x => !x.ok);
+    if (!warn.length) return;
+    classicWarn += warn.length;
+    const line = document.createElement('div');
+    line.className = 'cite';
+    line.innerHTML = '<span class="tag" style="background:#fdf5e6;color:#9a6400">经典</span><span style="color:#9a6400">本句涉及 ' +
+      warn.map(w => esc(w.name) + '，缺 ' + esc(w.std) + '（例：' + esc(w.example) + '）').join('；') + '</span>';
+    box.appendChild(line);
+  });
+  msg.textContent = '共 ' + sents.length + ' 句、' + citeCount + ' 处引注；其中 ' + badCount + ' 处有问题（悬空/已证伪/元数据有误）' + (classicWarn ? '，另有 ' + classicWarn + ' 处缺经典页码' : '');
   holder.style.display = 'block';
 }
 
@@ -805,6 +845,20 @@ function renderGround(idx){
   if (!g) return;
   const color = g.verdict === '支持' ? '#1e7b52' : g.verdict === '无关' ? '#b3261e' : g.verdict === '部分支持' ? '#9a6400' : '#5b6470';
   box.innerHTML = '<b style="color:' + color + '">断言支撑：' + esc(g.verdict) + '</b>　' + esc(g.reason || '');
+}
+
+
+if (location.search.includes('demo=classic')){
+  $('input').value = [
+    '柏拉图. 理想国[M]. 郭斌和, 张竹明, 译. 北京: 商务印书馆, 1986. Resp. 514a-517a.',
+    '康德. 纯粹理性批判[M]. 邓晓芒, 译. 北京: 人民出版社, 2004.',
+    '亚里士多德. 尼各马可伦理学[M]. 廖申白, 译. 北京: 商务印书馆, 2003. 1094a.'
+  ].join(String.fromCharCode(10));
+  setTimeout(async () => {
+    await run();
+    $('para').value = '柏拉图在洞穴喻中说，教育不是把知识灌进灵魂[1]。康德认为先天综合判断如何可能，是批判哲学的总问题[2]。';
+    auditParagraph();
+  }, 400);
 }
 
 // 开发用：?demo=para 一键验证
