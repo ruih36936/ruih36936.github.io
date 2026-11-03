@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>引文照妖镜 CiteMirror · 给每一条参考文献验真</title>
+<style>
+  :root{
+    --ink:#1c1c1c; --ink2:#4b5563; --ink3:#8a8f98;
+    --paper:#f7f5f0; --card:#ffffff; --line:#e5e0d6;
+    --brand:#1f3f66; --brand2:#2b5d8a;
+    --ok:#1e7b52; --ok-bg:#eef7f2;
+    --no:#b3261e; --no-bg:#fbeeec;
+    --warn:#9a6400; --warn-bg:#fdf5e6;
+    --grey:#5b6470; --grey-bg:#f1f3f5;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:"Microsoft YaHei","PingFang SC",-apple-system,sans-serif;
+    font-size:14px; line-height:1.7;
+  }
+  a{color:var(--brand2);text-decoration:none;border-bottom:1px solid #c8d6e5}
+  a:hover{border-bottom-color:var(--brand2)}
+
+  header{
+    background:linear-gradient(180deg,#fbfaf6,#f4f1e9);
+    border-bottom:1px solid var(--line);
+    padding:22px 36px 18px; position:relative;
+  }
+  .brand{display:flex;align-items:baseline;gap:14px}
+  h1{
+    font-family:"Source Han Serif SC","Noto Serif SC","SimSun",serif;
+    font-size:30px;letter-spacing:3px;margin:0;font-weight:700;color:var(--brand);
+  }
+  .latin{font-family:Georgia,serif;font-size:15px;color:var(--ink3);letter-spacing:1px}
+  .tagline{margin:6px 0 0;color:var(--ink2);font-size:13.5px}
+  .seal{
+    position:absolute;right:40px;top:26px;
+    border:2px solid #a8342a;color:#a8342a;border-radius:4px;
+    padding:5px 8px;font-family:"Source Han Serif SC","SimSun",serif;
+    font-size:13px;letter-spacing:4px;line-height:1.2;transform:rotate(-3deg);opacity:.85;
+  }
+  .rules-line{margin-top:10px;font-size:12.5px;color:var(--ink3)}
+  .rules-line b{color:var(--brand)}
+
+  main{max-width:1240px;margin:26px auto 60px;padding:0 24px;
+       display:grid;grid-template-columns:440px 1fr;gap:22px;align-items:start}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;
+         box-shadow:0 1px 2px rgba(31,63,102,.04),0 8px 24px rgba(31,63,102,.05)}
+  .panel .hd{padding:14px 18px;border-bottom:1px solid var(--line);
+             display:flex;align-items:center;justify-content:space-between}
+  .panel .hd h2{font-size:14px;margin:0;letter-spacing:1px;color:var(--brand)}
+  .panel .bd{padding:16px 18px}
+
+  textarea{
+    width:100%;height:300px;resize:vertical;border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;font-size:12.5px;line-height:1.9;color:var(--ink);background:#fcfcfa;
+    font-family:"Microsoft YaHei",sans-serif;outline:none;
+  }
+  textarea:focus{border-color:var(--brand2);background:#fff;box-shadow:0 0 0 3px rgba(43,93,138,.08)}
+
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+  button{
+    font-family:inherit;font-size:13px;border-radius:7px;padding:9px 16px;cursor:pointer;
+    border:1px solid var(--line);background:#fff;color:var(--ink2);transition:.15s;
+  }
+  button:hover{background:#faf8f3;border-color:#d6cfc0}
+  button.primary{
+    background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;
+    padding:10px 22px;letter-spacing:1px;
+  }
+  button.primary:hover{background:var(--brand2)}
+  button.primary:disabled{background:#9aa8b8;border-color:#9aa8b8;cursor:not-allowed}
+  .hint{font-size:11.5px;color:var(--ink3);margin-top:10px}
+
+  /* 统计 */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+  .stat{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#fff}
+  .stat .n{font-size:22px;font-weight:700;line-height:1.1;font-family:Georgia,serif}
+  .stat .t{font-size:11.5px;color:var(--ink3);margin-top:2px}
+  .stat.ok .n{color:var(--ok)} .stat.no .n{color:var(--no)}
+  .stat.warn .n{color:var(--warn)} .stat.grey .n{color:var(--grey)}
+
+  /* 结果卡 */
+  .item{border:1px solid var(--line);border-radius:10px;background:#fff;margin-bottom:12px;overflow:hidden}
+  .item .top{display:flex;gap:10px;align-items:flex-start;padding:14px 16px 10px}
+  .badge{flex:none;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.5px;margin-top:2px}
+  .b-ok{color:var(--ok);background:var(--ok-bg);border:1px solid #cfe8dc}
+  .b-no{color:var(--no);background:var(--no-bg);border:1px solid #f2d4d0}
+  .b-warn{color:var(--warn);background:var(--warn-bg);border:1px solid #f0e0bf}
+  .b-grey{color:var(--grey);background:var(--grey-bg);border:1px solid #dfe3e8}
+  .raw{font-size:12px;color:var(--ink3);line-height:1.7;word-break:break-all}
+  .raw .idx{color:#b9b2a3;margin-right:4px}
+  .meta{display:flex;gap:16px;flex-wrap:wrap;padding:0 16px 10px;font-size:12px;color:var(--ink2)}
+  .meta span b{color:var(--ink);font-weight:600}
+  .reasons{padding:0 16px 12px}
+  .reasons div{font-size:12.5px;color:var(--ink2);padding-left:14px;position:relative;margin:3px 0}
+  .reasons div:before{content:"";position:absolute;left:2px;top:9px;width:4px;height:4px;border-radius:50%;background:#c9c2b4}
+  .evidence{border-top:1px dashed var(--line);padding:10px 16px;background:#fcfbf8;font-size:12px;color:var(--ink2)}
+  .evidence div{margin:2px 0;word-break:break-all}
+  .empty{text-align:center;color:var(--ink3);padding:70px 20px;font-size:13px}
+  .empty .big{font-family:"Source Han Serif SC","SimSun",serif;font-size:44px;color:#ded7c8;letter-spacing:8px;margin-bottom:10px}
+  .progress{font-size:12.5px;color:var(--ink2);margin-bottom:12px}
+  .loading .item{opacity:.55}
+
+  footer{max-width:1240px;margin:0 auto;padding:0 24px 40px;color:var(--ink3);font-size:11.5px}
+  footer .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;border-top:1px solid var(--line);padding-top:14px}
+
+  @media (max-width:1000px){ main{grid-template-columns:1fr} }
+  @media print{
+    header{background:#fff} .seal{display:none}
+    main{display:block} .panel{border:none;box-shadow:none}
+    button,.hint,textarea{display:none}
+    .item{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>引文照妖镜</h1>
+    <span class="latin">CiteMirror</span>
+  </div>
+  <p class="tagline">给每一条参考文献验一次真 —— 真的、假的、抄错 DOI 的、查不到的，四色分开，每条都带证据。</p>
+  <div class="rules-line">
+    <b>判定规则</b>：已证伪只有两种铁证（DOI 查无此号 / DOI 指向另一篇）· 无 DOI 的文献永不判伪造 · 查不到 ≠ 是假的
+  </div>
+  <div class="seal">验真</div>
+</header>
+
+<main>
+  <!-- 输入 -->
+  <section class="panel">
+    <div class="hd">
+      <h2>① 粘贴参考文献</h2>
+      <span style="font-size:11.5px;color:#8a8f98">一行一条</span>
+    </div>
+    <div class="bd">
+      <textarea id="input" spellcheck="false" placeholder="把论文末尾的参考文献整段粘进来（一行一条）。&#10;&#10;支持：GB/T 7714 格式、英文 APA/Chicago、带或不带 DOI。"></textarea>
+      <div class="row">
+        <button class="primary" id="runBtn" onclick="run()">开始验真</button>
+        <button onclick="loadSample()">载入示例</button>
+        <button onclick="clearAll()">清空</button>
+      </div>
+      <div class="hint">Ctrl + Enter 开始 · 数据只在你的浏览器里处理，不上传服务器 · 文献库：Crossref / OpenAlex</div>
+    </div>
+  </section>
+
+  <!-- 结果 -->
+  <section>
+    <div class="stats" id="stats" style="display:none">
+      <div class="stat ok"><div class="n" id="n-ok">0</div><div class="t">已证实存在</div></div>
+      <div class="stat no"><div class="n" id="n-no">0</div><div class="t">已证伪</div></div>
+      <div class="stat warn"><div class="n" id="n-warn">0</div><div class="t">元数据有误</div></div>
+      <div class="stat grey"><div class="n" id="n-grey">0</div><div class="t">无法核验（≠伪造）</div></div>
+    </div>
+    <div class="progress" id="progress" style="display:none"></div>
+    <div id="results">
+      <div class="empty">
+        <div class="big">验</div>
+        左边粘入参考文献，点「开始验真」<br>
+        <span style="font-size:12px">每条会得到四色判定之一，并附上可点开的证据</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="grid">
+    <div>
+      <b style="color:#4b5563">它是怎么判的</b><br>
+      ① 有 DOI → 查 Crossref，再查 OpenAlex；两库都无此号 → 已证伪。<br>
+      ② 有 DOI 但题名对不上 → 元数据有误（可能是张冠李戴）。<br>
+      ③ 无 DOI → 只按题名在开放库里找，找不到就判「无法核验」，绝不判伪造。
+    </div>
+    <div>
+      <b style="color:#4b5563">为什么要这样分</b><br>
+      中文哲学文献大量是专著与知网期刊，两个库都不收录。把「查不到」报成「伪造」，
+      会让人删掉一条正确的引用。判定阈值不是技术参数，是责任分配。
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ============ 工具 ============ */
+const $ = (id) => document.getElementById(id);
+const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+function bigrams(s){ const t = norm(s), out = []; for (let i = 0; i < t.length - 1; i++) out.push(t.slice(i, i + 2)); return out; }
+function similarity(a, b){
+  const A = bigrams(a), B = bigrams(b);
+  if (!A.length || !B.length) return norm(a) === norm(b) ? 1 : 0;
+  const pool = new Map(); for (const g of A) pool.set(g, (pool.get(g) || 0) + 1);
+  let hit = 0;
+  for (const g of B) { const n = pool.get(g) || 0; if (n > 0) { hit++; pool.set(g, n - 1); } }
+  return (2 * hit) / (A.length + B.length);
+}
+async function getJson(url){
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    if (r.status === 404) return { status: 404, data: null };
+    if (!r.ok) return { status: r.status, data: null };
+    return { status: r.status, data: await r.json() };
+  } catch (e) { return { status: 0, data: null, error: e.message }; }
+  finally { clearTimeout(t); }
+}
+
+/* ============ 解析一条参考文献 ============ */
+const DOI_RE = /10\.\d{4,9}\/[^\s"'<>,;)\]]+/i;
+const YEAR_RE = /(1[89]\d{2}|20\d{2})/;
+function parseCitation(raw){
+  const doi = (raw.match(DOI_RE) || [])[0] || null;
+  const year = (raw.match(YEAR_RE) || [])[0] || null;
+  let title = null;
+  const bracket = raw.match(/[.。]\s*([^.[\]。]+?)\s*[[［]([A-Z]{1,2})[\]］]/);
+  if (bracket) title = bracket[1].trim();
+  if (!title){
+    const BAD = /(press|university|journal|review|studies|quarterly|annals|transactions|proceedings|publications|出版社|学报|杂志|大学出版社|印书馆)/i;
+    const strip = (s) => {
+      let t = s.replace(/\s*[,，]\s*(1[89]\d{2}|20\d{2})\b[\s\S]*$/, '');
+      const q = t.match(/^[^?？!！]{5,}[?？!！]/); if (q) t = q[0];
+      return t.trim();
+    };
+    const segs = raw.split(/[.。]/).map(strip).filter((s) => s && s.length >= 6);
+    let best = null, bestScore = -1;
+    for (const s of segs){ const score = (BAD.test(s) ? 0 : 100) + Math.min(s.length, 80); if (score > bestScore){ bestScore = score; best = s; } }
+    title = best || raw;
+  }
+  title = title.replace(/\s*[,，]\s*(1[89]\d{2}|20\d{2})\b[\s\S]*$/, '').replace(DOI_RE, '').replace(/[,，;；\s]+$/, '').trim();
+  return { raw, doi, title, year };
+}
+
+/* ============ 文献库 ============ */
+function crRecord(it){
+  return {
+    source: 'Crossref', doi: it.DOI,
+    title: (it.title || [])[0] || '', year: it.issued?.['date-parts']?.[0]?.[0] || null,
+    authors: (it.author || []).map(a => a.family || a.name).filter(Boolean),
+    venue: (it['container-title'] || [])[0] || '', type: it.type,
+    url: it.DOI ? 'https://doi.org/' + it.DOI : ''
+  };
+}
+function oaRecord(w){
+  return {
+    source: 'OpenAlex', doi: (w.doi || '').replace(/^https?:\/\/doi\.org\//, '') || null,
+    title: w.title || '', year: w.publication_year || null,
+    authors: (w.authorships || []).map(a => a.author?.display_name).filter(Boolean),
+    venue: w.primary_location?.source?.display_name || '', type: w.type,
+    url: w.doi || w.id
+  };
+}
+async function crByDoi(doi){
+  const { data } = await getJson('https://api.crossref.org/works/' + encodeURIComponent(doi) + '?mailto=citemirror@localhost');
+  return data?.message ? crRecord(data.message) : null;
+}
+async function crSearch(title){
+  const q = encodeURIComponent(title.slice(0, 200));
+  const { data } = await getJson('https://api.crossref.org/works?query.bibliographic=' + q + '&rows=5&select=DOI,title,author,issued,container-title,type&mailto=citemirror@localhost');
+  return (data?.message?.items || []).map(crRecord);
+}
+async function oaByDoi(doi){
+  const { data } = await getJson('https://api.openalex.org/works/https://doi.org/' + encodeURIComponent(doi) + '?mailto=citemirror@localhost');
+  return data ? oaRecord(data) : null;
+}
+async function oaSearch(title){
+  const q = encodeURIComponent(title.slice(0, 200));
+  const { data } = await getJson('https://api.openalex.org/works?search=' + q + '&per-page=5&mailto=citemirror@localhost');
+  return (data?.results || []).map(oaRecord);
+}
+function bestMatch(records, title, year){
+  let best = null, bestScore = -1, bestSim = 0;
+  for (const r of records){
+    if (!r.title) continue;
+    const s = similarity(title, r.title);
+    let score = s;
+    if (year && r.year){
+      const d = Math.abs(Number(year) - Number(r.year));
+      score += d <= 1 ? 0.05 : 0;              // 年份对得上优先
+      score -= Math.min(d, 40) / 40 * 0.03;    // 同题名多版本时，取年份更近的（原刊 vs 再版）
+    }
+    if (score > bestScore){ bestScore = score; bestSim = s; best = r; }
+  }
+  return { record: best, sim: Math.round(bestSim * 100) / 100 };
+}
+
+/* ============ 判定 ============ */
+async function judge(raw){
+  const p = parseCitation(raw);
+  const out = { raw, parsed: p, tier: '', reasons: [], evidence: [], match: null, candidates: [] };
+  const yearOk = (r) => (p.year && r && r.year ? Math.abs(Number(p.year) - Number(r.year)) <= 1 : null);
+
+  if (p.doi){
+    let rec = await crByDoi(p.doi);
+    let from = 'Crossref';
+    if (!rec){ rec = await oaByDoi(p.doi); from = 'OpenAlex'; }
+    if (!rec){
+      out.tier = 'fabricated';
+      out.reasons.push('DOI 在 Crossref 与 OpenAlex 都查无此号 —— 这个号没有注册，属于伪造或抄错');
+      out.evidence.push('Crossref 查询：works/' + p.doi + ' → 404');
+      out.evidence.push('OpenAlex 查询：works/doi.org/' + p.doi + ' → 404');
+      return out;
+    }
+    out.match = rec;
+    out.evidence.push(from + ' 元数据：' + rec.title + ' / ' + (rec.year || '?') + ' / ' + rec.authors.slice(0, 3).join(', '));
+    if (rec.url) out.evidence.push('原文链接：' + rec.url);
+    const sim = similarity(p.title, rec.title);
+    const yk = yearOk(rec);
+    if (sim >= 0.75 && yk !== false){
+      out.tier = 'verified';
+      out.reasons.push('题名相似度 ' + Math.round(sim * 100) + '%，年份 ' + (rec.year || '?') + ' 一致');
+    } else if (sim < 0.45){
+      out.tier = 'metadata_conflict';
+      out.reasons.push('DOI 真实，但指向的是另一篇：《' + rec.title + '》（相似度 ' + Math.round(sim * 100) + '%）—— 张冠李戴');
+    } else {
+      out.tier = 'metadata_conflict';
+      out.reasons.push('DOI 真实，但' + (sim < 0.75 ? '题名相似度仅 ' + Math.round(sim * 100) + '%' : '年份对不上（库里 ' + rec.year + '，引文写 ' + p.year + '）'));
+    }
+    return out;
+  }
+
+  const [cr, oa] = await Promise.all([crSearch(p.title), oaSearch(p.title)]);
+  const pool = [...cr, ...oa];
+  out.candidates = pool
+    .map(r => ({ title: r.title, year: r.year, venue: r.venue, url: r.url, sim: Math.round(similarity(p.title, r.title) * 100) / 100 }))
+    .filter(r => r.sim >= 0.4).slice(0, 5);
+  const { record, sim } = bestMatch(pool, p.title, p.year);
+  if (record && sim >= 0.9){
+    out.match = record;
+    const yk = yearOk(record);
+    out.evidence.push('开放库命中：' + record.title + ' (' + (record.year || '?') + ') ' + (record.url || ''));
+    if (yk === false){
+      out.tier = 'metadata_conflict';
+      out.reasons.push('题名命中，但年份不符（库里 ' + record.year + '，引文写 ' + p.year + '）');
+    } else {
+      out.tier = 'verified';
+      out.reasons.push('题名相似度 ' + Math.round(sim * 100) + '%，年份一致');
+    }
+    return out;
+  }
+  out.tier = 'unverifiable';
+  out.reasons.push(record && sim >= 0.75
+    ? '只找到相似度 ' + Math.round(sim * 100) + '% 的近似记录，不足以确认，按「查不到」处理'
+    : 'Crossref / OpenAlex 均无匹配记录。可能是专著、非英文文献或未被收录 —— 这不是伪造的证据');
+  return out;
+}
+
+/* ============ 渲染 ============ */
+const TIER = {
+  verified: { label: '已证实存在', cls: 'b-ok' },
+  fabricated: { label: '已证伪', cls: 'b-no' },
+  metadata_conflict: { label: '元数据有误', cls: 'b-warn' },
+  unverifiable: { label: '无法核验', cls: 'b-grey' }
+};
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function renderItem(r, idx){
+  const t = TIER[r.tier];
+  const p = r.parsed;
+  const el = document.createElement('div');
+  el.className = 'item';
+  let meta = '';
+  if (p.title) meta += '<span>题名 <b>' + esc(p.title.slice(0, 70)) + '</b></span>';
+  if (p.year) meta += '<span>年份 <b>' + esc(p.year) + '</b></span>';
+  if (p.doi) meta += '<span>DOI <b>' + esc(p.doi) + '</b></span>';
+  el.innerHTML =
+    '<div class="top"><span class="badge ' + t.cls + '">' + t.label + '</span>' +
+      '<div class="raw"><span class="idx">' + (idx + 1) + '.</span>' + esc(r.raw) + '</div></div>' +
+    (meta ? '<div class="meta">' + meta + '</div>' : '') +
+    '<div class="reasons">' + r.reasons.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' +
+    (r.evidence.length ? '<div class="evidence">' + r.evidence.map(x =>
+        '<div>· ' + (x.includes('http') ? esc(x).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>') : esc(x)) + '</div>').join('') + '</div>' : '');
+  return el;
+}
+
+function renderStats(list){
+  const c = { verified: 0, fabricated: 0, metadata_conflict: 0, unverifiable: 0 };
+  list.forEach(r => c[r.tier]++);
+  $('n-ok').textContent = c.verified;
+  $('n-no').textContent = c.fabricated;
+  $('n-warn').textContent = c.metadata_conflict;
+  $('n-grey').textContent = c.unverifiable;
+  $('stats').style.display = 'grid';
+}
+
+/* ============ 主流程 ============ */
+let lastResults = [];
+async function run(){
+  const lines = $('input').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if (!lines.length){ alert('先把参考文献粘进来（一行一条）'); return; }
+  const btn = $('runBtn');
+  btn.disabled = true; btn.textContent = '验真中…';
+  $('results').innerHTML = '';
+  $('progress').style.display = 'block';
+  const done = [];
+  let finished = 0;
+  const results = [];
+
+  const worker = async (line, i) => {
+    let r;
+    try { r = await judge(line); }
+    catch (e) { r = { raw: line, parsed: parseCitation(line), tier: 'unverifiable', reasons: ['网络异常：' + e.message], evidence: [], match: null, candidates: [] }; }
+    results[i] = r;
+    finished++;
+    $('progress').textContent = '正在核验 ' + finished + ' / ' + lines.length + ' …';
+    renderStats(results.filter(Boolean));
+  };
+
+  const LIMIT = 3;
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(LIMIT, lines.length) }, async () => {
+    while (cursor < lines.length){
+      const i = cursor++;
+      await worker(lines[i], i);
+    }
+  });
+  await Promise.all(runners);
+
+  results.forEach((r, i) => $('results').appendChild(renderItem(r, i)));
+  lastResults = results;
+  renderStats(results);
+  $('progress').style.display = 'none';
+  btn.disabled = false; btn.textContent = '重新验真';
+  window.__done = true;
+}
+
+function loadSample(){
+  $('input').value = [
+    '柏拉图. 理想国[M]. 郭斌和, 张竹明, 译. 北京: 商务印书馆, 1986.',
+    'Nagel T. What Is It Like to Be a Bat?[J]. The Philosophical Review, 1974, 83(4): 435-450. DOI: 10.2307/2183914',
+    '李四. 人工智能的本体论基础[J]. 哲学研究, 2019, 12(2): 3-15. DOI: 10.2307/2183914',
+    'Floridi L, Cowls J. A Unified Framework of Five Principles for AI in Society[J]. Harvard Data Science Review, 2019. DOI: 10.1162/99608f92.8cd550d1',
+    '张三. 论人工智能的伦理边界[J]. 哲学研究, 2023, 45(3): 12-25. DOI: 10.1234/fake.2023.001',
+    'Wang L. Moral Luck and Algorithmic Decision-making[J]. Philosophical Studies, 2021, 178(9): 2891-2910. DOI: 10.1007/s11098-019-99999-9',
+    'Nagel T. What Is It Like to Be a Bat?[J]. The Philosophical Review, 1995, 83(4): 435-450.',
+    '王阳明. 传习录[M]. 北京: 中华书局, 2016.'
+  ].join('\n');
+}
+function clearAll(){ $('input').value = ''; $('results').innerHTML = '<div class="empty"><div class="big">验</div>左边粘入参考文献，点「开始验真」</div>'; $('stats').style.display = 'none'; }
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); run(); }
+});
+
+/* 演示模式：?demo=1 自动载入并跑 */
+if (location.search.includes('demo=1')){
+  loadSample();
+  setTimeout(run, 300);
+}
+</script>
+</body>
+</html>
