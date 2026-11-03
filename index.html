@@ -99,6 +99,10 @@
   .reasons{padding:0 16px 12px}
   .reasons div{font-size:12.5px;color:var(--ink2);padding-left:14px;position:relative;margin:3px 0}
   .reasons div:before{content:"";position:absolute;left:2px;top:9px;width:4px;height:4px;border-radius:50%;background:#c9c2b4}
+  .flag{margin:0 16px 8px;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:600}
+  .flag.retr{background:#fbeeec;color:#b3261e;border:1px solid #f2d4d0}
+  .flag.corr{background:#fdf5e6;color:#9a6400;border:1px solid #f0e0bf}
+  .fmt{padding:0 16px 8px;font-size:11.5px;color:#8a8f98}
   .evidence{border-top:1px dashed var(--line);padding:10px 16px;background:#fcfbf8;font-size:12px;color:var(--ink2)}
   .evidence div{margin:2px 0;word-break:break-all}
   .empty{text-align:center;color:var(--ink3);padding:70px 20px;font-size:13px}
@@ -145,6 +149,8 @@
         <button class="primary" id="runBtn" onclick="run()">开始验真</button>
         <button onclick="loadSample()">载入示例</button>
         <button onclick="clearAll()">清空</button>
+        <button onclick="exportCsv()" id="csvBtn" disabled>导出 CSV</button>
+        <button onclick="window.print()">打印 / 存 PDF</button>
       </div>
       <div class="hint">Ctrl + Enter 开始 · 数据只在你的浏览器里处理，不上传服务器 · 文献库：Crossref / OpenAlex</div>
     </div>
@@ -211,10 +217,17 @@ async function getJson(url){
 }
 
 /* ============ 解析一条参考文献 ============ */
-const DOI_RE = /10\.\d{4,9}\/[^\s"'<>,;)\]]+/i;
+const DOI_RE = /10\.\d{4,9}\/[^\s"'<>]+/i;
+// DOI 里可以有括号（如 Lancet: 10.1016/S0140-6736(97)11096-0），只去掉不配对的尾部括号
+function extractDoi(raw){
+  const m = raw.match(DOI_RE); if (!m) return null;
+  let d = m[0].replace(/[.,;]+$/, '');
+  while (d.endsWith(')') && (d.match(/\(/g) || []).length !== (d.match(/\)/g) || []).length) d = d.slice(0, -1);
+  return d;
+}
 const YEAR_RE = /(1[89]\d{2}|20\d{2})/;
 function parseCitation(raw){
-  const doi = (raw.match(DOI_RE) || [])[0] || null;
+  const doi = extractDoi(raw);
   const year = (raw.match(YEAR_RE) || [])[0] || null;
   let title = null;
   const bracket = raw.match(/[.。]\s*([^.[\]。]+?)\s*[[［]([A-Z]{1,2})[\]］]/);
@@ -242,6 +255,7 @@ function crRecord(it){
     title: (it.title || [])[0] || '', year: it.issued?.['date-parts']?.[0]?.[0] || null,
     authors: (it.author || []).map(a => a.family || a.name).filter(Boolean),
     venue: (it['container-title'] || [])[0] || '', type: it.type,
+    updatedBy: it['updated-by'] || [],
     url: it.DOI ? 'https://doi.org/' + it.DOI : ''
   };
 }
@@ -306,6 +320,20 @@ async function judge(raw){
       return out;
     }
     out.match = rec;
+    out.flags = [];
+    const retr = (rec.updatedBy || []).filter(x => x.type === 'retraction');
+    const corr = (rec.updatedBy || []).filter(x => x.type === 'correction');
+    if (retr.length) {
+      const d = (retr[0].updated || {})['date-parts'];
+      out.flags.push({ type: 'retraction', doi: retr[0].DOI, date: d ? d[0].join('-') : '' });
+      out.reasons.push('该文献已被撤稿' + (d ? '（' + d[0].join('-') + '）' : '') + ' —— 无论元数据多正确，都不应引用');
+      out.evidence.push('撤稿声明：https://doi.org/' + retr[0].DOI);
+    }
+    if (corr.length && !retr.length) {
+      out.flags.push({ type: 'correction', doi: corr[0].DOI });
+      out.reasons.push('该文献有更正记录，引用前请核对更正后的表述');
+      out.evidence.push('更正声明：https://doi.org/' + corr[0].DOI);
+    }
     out.evidence.push(from + ' 元数据：' + rec.title + ' / ' + (rec.year || '?') + ' / ' + rec.authors.slice(0, 3).join(', '));
     if (rec.url) out.evidence.push('原文链接：' + rec.url);
     const sim = similarity(p.title, rec.title);
@@ -343,6 +371,9 @@ async function judge(raw){
     return out;
   }
   out.tier = 'unverifiable';
+  if (/[一-鿿]/.test(raw)) {
+    out.reasons.push('中文文献提示：可在「国家图书馆 OPAC」「读秀」「知网」按题名检索，核对版权页');
+  }
   out.reasons.push(record && sim >= 0.75
     ? '只找到相似度 ' + Math.round(sim * 100) + '% 的近似记录，不足以确认，按「查不到」处理'
     : 'Crossref / OpenAlex 均无匹配记录。可能是专著、非英文文献或未被收录 —— 这不是伪造的证据');
@@ -356,6 +387,17 @@ const TIER = {
   metadata_conflict: { label: '元数据有误', cls: 'b-warn' },
   unverifiable: { label: '无法核验', cls: 'b-grey' }
 };
+
+// GB/T 7714 常见要素完整性（粗判，只做提示不做裁决）
+function checkFormat(raw){
+  const miss = [];
+  if (!/[A-Za-z一-鿿]{2,}/.test(raw.split(/[.。]/)[0] || '')) miss.push('作者');
+  if (!/(19|20)\d{2}/.test(raw)) miss.push('年份');
+  const hasVenue = /(出版社|Press|University|Book|书局|印书馆|书店|公司|刊|学报|杂志|Journal|Review|Studies|Lancet|Nature|Science|Cell|BMJ|PLOS|PNAS|JAMA)/i.test(raw);
+  if (!hasVenue) miss.push('出处（刊名/出版社）');
+  if (!/[:(（]\s*\d+/.test(raw) && !/(19|20)\d{2}\s*[,，]/.test(raw)) miss.push('卷期或页码');
+  return { ok: miss.length === 0, miss };
+}
 
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
@@ -371,6 +413,10 @@ function renderItem(r, idx){
   el.innerHTML =
     '<div class="top"><span class="badge ' + t.cls + '">' + t.label + '</span>' +
       '<div class="raw"><span class="idx">' + (idx + 1) + '.</span>' + esc(r.raw) + '</div></div>' +
+    ((r.flags || []).some(f => f.type === 'retraction')
+      ? '<div class="flag retr">⛔ 已撤稿 —— 文献存在，但不应引用（撤稿声明见证据区）</div>'
+      : ((r.flags || []).some(f => f.type === 'correction') ? '<div class="flag corr">⚠ 有更正记录 —— 引用前核对更正后的表述</div>' : '')) +
+    '<div class="fmt">' + (function(){ const f = checkFormat(r.raw); return f.ok ? '格式完整性：通过（要素齐全）' : '格式完整性：缺 ' + f.miss.join('、'); })() + '</div>' +
     (meta ? '<div class="meta">' + meta + '</div>' : '') +
     '<div class="reasons">' + r.reasons.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>' +
     (r.evidence.length ? '<div class="evidence">' + r.evidence.map(x =>
@@ -426,7 +472,27 @@ async function run(){
   renderStats(results);
   $('progress').style.display = 'none';
   btn.disabled = false; btn.textContent = '重新验真';
+  const cb = $('csvBtn'); if (cb) cb.disabled = false;
   window.__done = true;
+}
+
+function exportCsv(){
+  if (!lastResults.length) return;
+  const head = ['序号','原文','判定','题名','年份','DOI','撤稿','理由'];
+  const rows = lastResults.map((r, i) => [
+    i + 1, r.raw,
+    (TIER[r.tier] || {}).label || r.tier,
+    r.parsed.title || '', r.parsed.year || '', r.parsed.doi || '',
+    (r.flags || []).some(f => f.type === 'retraction') ? '是' : '',
+    (r.reasons || []).join('；')
+  ]);
+  const csv = [head, ...rows].map(a => a.map(x => '"' + String(x).replace(/"/g, '""') + '"').join(',')).join(String.fromCharCode(13) + String.fromCharCode(10));
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '引文核验报告.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function loadSample(){
@@ -450,6 +516,14 @@ document.addEventListener('keydown', (e) => {
 /* 演示模式：?demo=1 自动载入并跑 */
 if (location.search.includes('demo=1')){
   loadSample();
+  setTimeout(run, 300);
+}
+// 开发用：?demo=retract 验证撤稿检测
+if (location.search.includes('demo=retract')){
+  $('input').value = [
+    'Wakefield A J, Murch S H, Anthony A, et al. Ileal-lymphoid-nodular hyperplasia, non-specific colitis, and pervasive developmental disorder in children[J]. The Lancet, 1998, 351(9103): 637-641. DOI: 10.1016/S0140-6736(97)11096-0',
+    'Wang L. Moral Luck and Algorithmic Decision-making[J]. Philosophical Studies, 2021, 178(9): 2891-2910. DOI: 10.1007/s11098-019-99999-9'
+  ].join(String.fromCharCode(10));
   setTimeout(run, 300);
 }
 </script>
