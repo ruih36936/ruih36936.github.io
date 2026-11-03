@@ -102,6 +102,11 @@
   .flag{margin:0 16px 8px;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:600}
   .flag.retr{background:#fbeeec;color:#b3261e;border:1px solid #f2d4d0}
   .flag.corr{background:#fdf5e6;color:#9a6400;border:1px solid #f0e0bf}
+  .sent{border:1px solid #e5e0d6;border-radius:8px;background:#fff;margin-bottom:10px;padding:10px 12px}
+  .sent .txt{font-size:13px;line-height:1.9;color:#1c1c1c}
+  .sent .txt mark{background:#fdf1c8;padding:0 2px;border-radius:3px}
+  .sent .cite{display:flex;gap:8px;align-items:flex-start;font-size:12px;margin-top:6px;padding-left:4px}
+  .sent .tag{flex:none;font-family:Consolas,monospace;color:#1f3f66;background:#eef2f6;border-radius:4px;padding:1px 6px}
   .ctx{padding:0 16px 8px;font-size:12px;color:#1f3f66;background:#f7f9fc;border-left:3px solid #c8d6e5;margin:0 16px 10px;border-radius:4px;padding:6px 10px}
   .ctx b{color:#1f3f66}
   .fmt{padding:0 16px 8px;font-size:11.5px;color:#8a8f98}
@@ -174,6 +179,21 @@
         <span class="hint" id="ctxMsg">先跑上面的验真，再核对；每条一次调用，约几分钱</span>
       </div>
       <div class="hint">Key 只存在这台浏览器（localStorage），不上传；公用电脑别点保存。</div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:16px">
+    <div class="hd">
+      <h2>③ 段落引用审计（实验）</h2>
+      <span style="font-size:11.5px;color:#8a8f98">先跑上面的验真</span>
+    </div>
+    <div class="bd">
+      <textarea id="para" style="height:96px" spellcheck="false" placeholder="贴一段带引注的正文，例如：&#10;人工智能不能承担道德责任[3]，因为它缺乏道德感受性[2]。&#10;&#10;引注按 [编号] 对应上面输入的参考文献行号。"></textarea>
+      <div class="row">
+        <button class="primary" onclick="auditParagraph()">审计这一段</button>
+        <button onclick="auditGrounding()" id="groundBtn">深度核对（需 Key）</button>
+        <span class="hint" id="auditMsg">只做引注对号与存在性判定，不花钱</span>
+      </div>
     </div>
   </section>
 
@@ -634,6 +654,167 @@ function renderCtx(idx){
   if (!c) return;
   const color = c.verdict === '支持' ? '#1e7b52' : c.verdict === '不支持' ? '#b3261e' : c.verdict === '部分支持' ? '#9a6400' : '#5b6470';
   box.innerHTML = '<b style="color:' + color + '">语境：' + esc(c.verdict) + '</b>　' + esc(c.reason || '');
+}
+
+
+/* ============ 段落引用审计（纯规则版） ============ */
+function extractMarkers(s){
+  const out = [];
+  const re = /[\[［]([0-9][0-9,，\-–—\s]*)[\]］]/g;
+  let m;
+  while ((m = re.exec(s)) !== null){
+    const nums = [];
+    for (const part of m[1].split(/[,，]/)){
+      const r = part.split(/[-–—]/).map(x => parseInt(x, 10)).filter(n => !isNaN(n));
+      if (r.length === 2){ for (let i = r[0]; i <= r[1] && i - r[0] < 50; i++) nums.push(i); }
+      else for (const n of r) nums.push(n);
+    }
+    out.push({ raw: m[0], index: m.index, nums });
+  }
+  return out;
+}
+
+function splitSentences(text){
+  return text.split(/(?<=[。！？!?；;])|\n+/).map(x => x.trim()).filter(Boolean);
+}
+
+function auditParagraph(){
+  const text = ($('para').value || '').trim();
+  const msg = $('auditMsg');
+  if (!text){ msg.textContent = '先贴一段带引注的正文'; return; }
+  if (!lastResults.length){ msg.textContent = '先在上面跑一次验真，才能对上号'; return; }
+
+  const holder = $('auditOut');
+  holder.innerHTML = '';
+  const sents = splitSentences(text);
+  let citeCount = 0, badCount = 0;
+
+  sents.forEach((sent, si) => {
+    const marks = extractMarkers(sent);
+    const box = document.createElement('div');
+    box.className = 'sent';
+
+    // 高亮引注
+    let html = '', last = 0;
+    for (const mk of marks){
+      html += esc(sent.slice(last, mk.index)) + '<mark>' + esc(mk.raw) + '</mark>';
+      last = mk.index + mk.raw.length;
+    }
+    html += esc(sent.slice(last));
+
+    let rows = '';
+    for (const mk of marks){
+      for (const n of mk.nums){
+        citeCount++;
+        const r = lastResults[n - 1];
+        let tag = '[' + n + ']';
+        let desc = '';
+        let color = '#5b6470';
+        if (!r){ desc = '参考文献里没有第 ' + n + ' 条 —— 引注悬空'; color = '#b3261e'; badCount++; }
+        else {
+          const t = TIER[r.tier] || { label: r.tier };
+          desc = t.label + '：' + (r.parsed.title || r.raw).slice(0, 46);
+          color = r.tier === 'verified' ? '#1e7b52' : r.tier === 'fabricated' ? '#b3261e' : r.tier === 'metadata_conflict' ? '#9a6400' : '#5b6470';
+          if (r.tier === 'fabricated' || r.tier === 'metadata_conflict') badCount++;
+          if ((r.flags || []).some(f => f.type === 'retraction')) desc += '（已撤稿）';
+        }
+        rows += '<div class="cite"><span class="tag">' + tag + '</span><span style="color:' + color + '">' + esc(desc) + '</span></div>';
+      }
+    }
+    box.innerHTML = '<div class="txt">' + html + '</div>' + (rows || '<div class="cite" style="color:#8a8f98">本句无引注</div>');
+    holder.appendChild(box);
+  });
+
+  msg.textContent = '共 ' + sents.length + ' 句、' + citeCount + ' 处引注；其中 ' + badCount + ' 处有问题（悬空/已证伪/元数据有误）';
+  holder.style.display = 'block';
+}
+
+// 审计结果容器（放在结果区顶部）
+(function(){
+  const r = document.getElementById('results');
+  if (r && !document.getElementById('auditOut')){
+    const d = document.createElement('div');
+    d.id = 'auditOut'; d.style.display = 'none'; d.style.marginBottom = '16px';
+    r.parentNode.insertBefore(d, r);
+  }
+})();
+
+
+/* 断言语境：一句一次调用，返回该句各引注的支撑度 */
+async function auditGrounding(){
+  const text = ($('para').value || '').trim();
+  const key = ($('apikey').value || '').trim() || localStorage.getItem(KEY_STORE) || '';
+  const msg = $('auditMsg');
+  if (!text) { msg.textContent = '先贴一段正文'; return; }
+  if (!key) { msg.textContent = '先在上面填 DeepSeek Key'; return; }
+  if (!lastResults.length) { msg.textContent = '先跑验真'; return; }
+
+  const btn = $('groundBtn'); btn.disabled = true;
+  const sents = splitSentences(text);
+  let n = 0;
+  for (const sent of sents){
+    const marks = extractMarkers(sent);
+    const nums = [...new Set(marks.flatMap(m => m.nums))];
+    const refs = nums.map(x => lastResults[x - 1]).filter(Boolean).filter(r => r.parsed.doi);
+    if (!refs.length) continue;
+    msg.textContent = '深度核对 ' + (++n) + ' / ' + sents.length + ' 句 …';
+
+    // 抓摘要（最多 3 条，控制成本）
+    const items = [];
+    for (const r of refs.slice(0, 3)){
+      try {
+        const meta = await fetchAbstract(r.parsed.doi);
+        items.push({ doi: r.parsed.doi, title: (meta && meta.title) || r.parsed.title, abs: (meta && meta.abstract || '').slice(0, 1200) });
+      } catch (e) { /* 跳过 */ }
+    }
+    if (!items.length) continue;
+
+    const sys = '你是学术引文核对助手。给定一句论文中的断言和它所引文献的摘要，判断每篇文献的摘要能否支持这句断言。只输出 JSON 数组，元素为 {"doi":"...","verdict":"支持|部分支持|摘要未体现|无关|无法判断","reason":"不超过25字"}。注意：摘要没提到不等于不支持，这种要标"摘要未体现"。';
+    const user = '断言：' + sent + '\n\n' + items.map((it, i) => `[${i + 1}] DOI:${it.doi}\n题名:${it.title}\n摘要:${it.abs || '（无摘要）'}`).join('\n\n');
+    try {
+      const r = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: JSON.stringify({ model: 'deepseek-chat', temperature: 0, max_tokens: 300,
+          messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] })
+      });
+      const d = await r.json();
+      const txt = (d.choices?.[0]?.message?.content || '').trim();
+      const m = txt.match(/\[[\s\S]*\]/);
+      const arr = m ? JSON.parse(m[0]) : [];
+      const map = new Map(arr.map(o => [String(o.doi).toLowerCase(), o]));
+      for (const r2 of refs){
+        const hit = map.get(String(r2.parsed.doi).toLowerCase());
+        if (hit) {
+          r2.ground = { verdict: hit.verdict, reason: hit.reason };
+          const idx = lastResults.indexOf(r2);
+          renderGround(idx);
+        }
+      }
+    } catch (e) { msg.textContent = '模型调用失败：' + e.message.slice(0, 40); }
+  }
+  btn.disabled = false;
+  msg.textContent = '深度核对完成（每句一次调用，已产生少量费用）';
+}
+
+function renderGround(idx){
+  const el = document.querySelectorAll('#results .item')[idx];
+  if (!el) return;
+  let box = el.querySelector('.ctx');
+  if (!box) { box = document.createElement('div'); box.className = 'ctx'; el.appendChild(box); }
+  const g = lastResults[idx].ground;
+  if (!g) return;
+  const color = g.verdict === '支持' ? '#1e7b52' : g.verdict === '无关' ? '#b3261e' : g.verdict === '部分支持' ? '#9a6400' : '#5b6470';
+  box.innerHTML = '<b style="color:' + color + '">断言支撑：' + esc(g.verdict) + '</b>　' + esc(g.reason || '');
+}
+
+// 开发用：?demo=para 一键验证
+if (location.search.includes('demo=para')){
+  loadSample();
+  setTimeout(async () => {
+    await run();
+    $('para').value = '人工智能不能承担道德责任[3]，因为它缺乏道德感受性[2]。也有学者认为这一批评并不成立[7]。';
+    auditParagraph();
+  }, 400);
 }
 
 loadKey();
