@@ -261,15 +261,30 @@ async function getJson(url){
 const DOI_RE = /10\.\d{4,9}\/[^\s"'<>]+/i;
 // DOI 里可以有括号（如 Lancet: 10.1016/S0140-6736(97)11096-0），只去掉不配对的尾部括号
 function extractDoi(raw){
-  const m = raw.match(DOI_RE); if (!m) return null;
-  let d = m[0].replace(/[.,;]+$/, '');
-  while (d.endsWith(')') && (d.match(/\(/g) || []).length !== (d.match(/\)/g) || []).length) d = d.slice(0, -1);
+  const m = raw.match(/10\.\d{4,9}\/\S+/i);
+  if (!m) return null;
+  let d = m[0].replace(/[.,;，。；]+$/, '');
+  const bal = (s, o, c) => s.split(o).length === s.split(c).length;
+  while (d.endsWith(')') && !bal(d, '(', ')')) d = d.slice(0, -1);
+  while (d.endsWith('>') && !bal(d, '<', '>')) d = d.slice(0, -1);
   return d;
+}
+function stripTags(x){ return String(x || '').replace(/<[^>]+>/g, ' '); }
+function titleSim(a, b){
+  a = stripTags(a); b = stripTags(b);
+  let s = similarity(a, b);
+  const na = norm(a), nb = norm(b);
+  if (na.length >= 40 && nb.length >= 40 && na.slice(0, 40) === nb.slice(0, 40)) s = Math.max(s, 0.85);
+  const short = na.length < nb.length ? na : nb;
+  const long = na.length < nb.length ? nb : na;
+  if (short.length >= 12 && long.includes(short)) s = Math.max(s, 0.88);
+  return s;
 }
 const YEAR_RE = /(1[89]\d{2}|20\d{2})/;
 function parseCitation(raw){
   const doi = extractDoi(raw);
-  const year = (raw.match(YEAR_RE) || [])[0] || null;
+  const years = raw.match(/(1[89]\d{2}|20\d{2})/g) || [];
+  const year = years.length ? years[years.length - 1] : null;
   let title = null;
   const bracket = raw.match(/[.。]\s*([^.[\]。]+?)\s*[[［]([A-Z]{1,2})[\]］]/);
   if (bracket) title = bracket[1].trim();
@@ -331,7 +346,7 @@ function bestMatch(records, title, year){
   let best = null, bestScore = -1, bestSim = 0;
   for (const r of records){
     if (!r.title) continue;
-    const s = similarity(title, r.title);
+    const s = titleSim(title, r.title);
     let score = s;
     if (year && r.year){
       const d = Math.abs(Number(year) - Number(r.year));
@@ -377,7 +392,7 @@ async function judge(raw){
     }
     out.evidence.push(from + ' 元数据：' + rec.title + ' / ' + (rec.year || '?') + ' / ' + rec.authors.slice(0, 3).join(', '));
     if (rec.url) out.evidence.push('原文链接：' + rec.url);
-    const sim = similarity(p.title, rec.title);
+    const sim = titleSim(p.title, rec.title);
     const yk = yearOk(rec);
     if (sim >= 0.75 && yk !== false){
       out.tier = 'verified';
