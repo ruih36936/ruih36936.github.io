@@ -102,6 +102,8 @@
   .flag{margin:0 16px 8px;padding:6px 10px;border-radius:6px;font-size:12px;font-weight:600}
   .flag.retr{background:#fbeeec;color:#b3261e;border:1px solid #f2d4d0}
   .flag.corr{background:#fdf5e6;color:#9a6400;border:1px solid #f0e0bf}
+  .ctx{padding:0 16px 8px;font-size:12px;color:#1f3f66;background:#f7f9fc;border-left:3px solid #c8d6e5;margin:0 16px 10px;border-radius:4px;padding:6px 10px}
+  .ctx b{color:#1f3f66}
   .fmt{padding:0 16px 8px;font-size:11.5px;color:#8a8f98}
   .evidence{border-top:1px dashed var(--line);padding:10px 16px;background:#fcfbf8;font-size:12px;color:var(--ink2)}
   .evidence div{margin:2px 0;word-break:break-all}
@@ -153,6 +155,25 @@
         <button onclick="window.print()">打印 / 存 PDF</button>
       </div>
       <div class="hint">Ctrl + Enter 开始 · 数据只在你的浏览器里处理，不上传服务器 · 文献库：Crossref / OpenAlex</div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:16px">
+    <div class="hd">
+      <h2>② 断言语境核对（可选）</h2>
+      <span style="font-size:11.5px;color:#8a8f98">需要自己的 API Key</span>
+    </div>
+    <div class="bd">
+      <textarea id="claim" style="height:74px" spellcheck="false" placeholder="写下你要核对的那句话，例如：人工智能可以承担道德责任。"></textarea>
+      <div class="row" style="margin-top:10px">
+        <input id="apikey" type="password" placeholder="DeepSeek API Key（sk-...）" style="flex:1;min-width:180px;border:1px solid #e5e0d6;border-radius:7px;padding:8px 10px;font-size:12px;outline:none">
+        <button onclick="saveKey()">保存到本机</button>
+      </div>
+      <div class="row">
+        <button class="primary" onclick="runContext()" id="ctxBtn">核对断言</button>
+        <span class="hint" id="ctxMsg">先跑上面的验真，再核对；每条一次调用，约几分钱</span>
+      </div>
+      <div class="hint">Key 只存在这台浏览器（localStorage），不上传；公用电脑别点保存。</div>
     </div>
   </section>
 
@@ -526,6 +547,96 @@ if (location.search.includes('demo=retract')){
   ].join(String.fromCharCode(10));
   setTimeout(run, 300);
 }
+
+/* ============ 断言语境核对（A1） ============ */
+const KEY_STORE = 'citemirror_deepseek_key';
+function saveKey(){
+  const k = ($('apikey').value || '').trim();
+  if (!k.startsWith('sk-')) { $('ctxMsg').textContent = 'Key 格式不对，应以 sk- 开头'; return; }
+  localStorage.setItem(KEY_STORE, k);
+  $('ctxMsg').textContent = '已保存到本机浏览器';
+}
+function loadKey(){
+  const k = localStorage.getItem(KEY_STORE) || '';
+  if (k) $('apikey').value = k;
+}
+
+// OpenAlex 的摘要是倒排索引，需还原
+function invertToText(inv){
+  if (!inv) return '';
+  const arr = [];
+  for (const [w, idxs] of Object.entries(inv)) for (const i of idxs) arr[i] = w;
+  return arr.filter(Boolean).join(' ');
+}
+async function fetchAbstract(doi){
+  if (!doi) return null;
+  const { data } = await getJson('https://api.openalex.org/works/https://doi.org/' + encodeURIComponent(doi) + '?mailto=citemirror@localhost');
+  if (!data) return null;
+  const txt = invertToText(data.abstract_inverted_index);
+  return txt ? { title: data.title || '', abstract: txt } : (data.title ? { title: data.title, abstract: '' } : null);
+}
+
+async function askLLM(key, claim, title, abstract){
+  const sys = '你是学术引文核对助手。判断给定文献的摘要能否支持用户的断言。只输出一行 JSON：{"verdict":"支持|部分支持|不支持|无法判断","reason":"不超过30字的中文理由"}';
+  const user = '断言：' + claim + '\n文献题名：' + title + '\n文献摘要：' + (abstract || '（无摘要）');
+  const r = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+    body: JSON.stringify({
+      model: 'deepseek-chat', temperature: 0, max_tokens: 120,
+      messages: [{ role: 'system', content: sys }, { role: 'user', content: user }]
+    })
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  const txt = (d.choices && d.choices[0] && d.choices[0].message.content || '').trim();
+  const m = txt.match(/\{[\s\S]*\}/);
+  if (m) { try { const o = JSON.parse(m[0]); return { verdict: o.verdict || '无法判断', reason: o.reason || '' }; } catch (e) {} }
+  return { verdict: '无法判断', reason: txt.slice(0, 40) };
+}
+
+async function runContext(){
+  const claim = ($('claim').value || '').trim();
+  const key = ($('apikey').value || '').trim() || localStorage.getItem(KEY_STORE) || '';
+  if (!claim) { $('ctxMsg').textContent = '先写下你要核对的那句话'; return; }
+  if (!key) { $('ctxMsg').textContent = '先填 DeepSeek API Key（没有可去 platform.deepseek.com 建一个）'; return; }
+  if (!lastResults.length) { $('ctxMsg').textContent = '先在上面跑一次验真，有结果才能核对'; return; }
+
+  const targets = lastResults.map((r, i) => ({ r, i })).filter(x => x.r.parsed.doi);
+  if (!targets.length) { $('ctxMsg').textContent = '结果里没有带 DOI 的条目，无法抓摘要'; return; }
+
+  $('ctxBtn').disabled = true;
+  let done = 0;
+  for (const { r, i } of targets) {
+    $('ctxMsg').textContent = '正在核对 ' + (++done) + ' / ' + targets.length + ' …';
+    try {
+      const meta = await fetchAbstract(r.parsed.doi);
+      if (!meta || !meta.abstract) {
+        r.ctx = { verdict: '无法判断', reason: '该文献没有公开摘要' };
+      } else {
+        r.ctx = await askLLM(key, claim, meta.title || r.parsed.title, meta.abstract.slice(0, 2500));
+      }
+    } catch (e) {
+      r.ctx = { verdict: '出错', reason: e.message.slice(0, 40) };
+    }
+    renderCtx(i);
+  }
+  $('ctxBtn').disabled = false;
+  $('ctxMsg').textContent = '核对完成（每条一次模型调用，已产生少量费用）';
+}
+
+function renderCtx(idx){
+  const el = document.querySelectorAll('#results .item')[idx];
+  if (!el) return;
+  let box = el.querySelector('.ctx');
+  if (!box) { box = document.createElement('div'); box.className = 'ctx'; el.appendChild(box); }
+  const c = lastResults[idx].ctx;
+  if (!c) return;
+  const color = c.verdict === '支持' ? '#1e7b52' : c.verdict === '不支持' ? '#b3261e' : c.verdict === '部分支持' ? '#9a6400' : '#5b6470';
+  box.innerHTML = '<b style="color:' + color + '">语境：' + esc(c.verdict) + '</b>　' + esc(c.reason || '');
+}
+
+loadKey();
 </script>
 </body>
 </html>
