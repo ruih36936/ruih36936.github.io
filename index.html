@@ -699,6 +699,63 @@ function extractMarkers(s){
   return out;
 }
 
+
+// 作者-年份式引注：在参考文献里按"年份 + 作者名"匹配
+function matchAuthorYear(name, year){
+  const n = (name || '').trim().replace(/(等|et al\.?|等\.)$/i, '').trim();
+  let best = -1, bestScore = 0;
+  lastResults.forEach((r, i) => {
+    const raw = r.raw || '';
+    if (!raw.includes(String(year))) return;
+    let score = 0;
+    const ln = raw.toLowerCase();
+    if (n && ln.includes(n.toLowerCase())) score += 3;
+    else {
+      const token = n.split(/[\s,，、]/)[0];
+      if (token && ln.includes(token.toLowerCase())) score += 1;
+    }
+    if (score > bestScore) { bestScore = score; best = i; }
+  });
+  return bestScore >= 1 ? best : -1;
+}
+
+// 统一抽取：编号 [1] /（作者，年）/ 作者（年）
+function extractAllMarkers(s){
+  const found = [];
+  const reNum = /[\[［]([0-9][0-9,，\-–—\s]*)[\]］]/g;
+  let m;
+  while ((m = reNum.exec(s)) !== null){
+    const nums = [];
+    for (const part of m[1].split(/[,，]/)){
+      const r = part.split(/[-–—]/).map(x => parseInt(x, 10)).filter(n => !isNaN(n));
+      if (r.length === 2){ for (let i = r[0]; i <= r[1] && i - r[0] < 50; i++) nums.push(i); }
+      else for (const n of r) nums.push(n);
+    }
+    found.push({ raw: m[0], index: m.index, nums });
+  }
+  // （作者，年份） / (Author, 1974)
+  const reAY = /[（(]([^（）()]{1,40}?)[，,]\s*(1[89]\d{2}|20\d{2})[a-z]?[）)]/g;
+  while ((m = reAY.exec(s)) !== null){
+    found.push({ raw: m[0], index: m.index, ay: { name: m[1], year: m[2] } });
+  }
+  // 作者（年份） / Author (1974)
+  const reAY2 = /([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z\s.\-]{0,18})[（(](1[89]\d{2}|20\d{2})[）)]/g;
+  while ((m = reAY2.exec(s)) !== null){
+    const name = m[1].trim();
+    if (!name || /^(见|参见|引自|转引|据)$/.test(name)) continue;
+    found.push({ raw: m[0], index: m.index, ay: { name, year: m[2] } });
+  }
+  found.sort((a, b) => a.index - b.index);
+  // 去掉区间重叠的重复标记
+  const out = [];
+  for (const f of found){
+    const end = f.index + f.raw.length;
+    if (out.length && f.index < out[out.length - 1].index + out[out.length - 1].raw.length) continue;
+    out.push(f);
+  }
+  return out;
+}
+
 function splitSentences(text){
   return text.split(/(?<=[。！？!?；;])|\n+/).map(x => x.trim()).filter(Boolean);
 }
@@ -715,7 +772,7 @@ function auditParagraph(){
   let citeCount = 0, badCount = 0;
 
   sents.forEach((sent, si) => {
-    const marks = extractMarkers(sent);
+    const marks = extractAllMarkers(sent);
     const box = document.createElement('div');
     box.className = 'sent';
 
@@ -729,6 +786,21 @@ function auditParagraph(){
 
     let rows = '';
     for (const mk of marks){
+      if (mk.ay){
+        citeCount++;
+        const idx = matchAuthorYear(mk.ay.name, mk.ay.year);
+        const r = idx >= 0 ? lastResults[idx] : null;
+        let desc = '', color = '#5b6470';
+        if (!r) { desc = '参考文献里找不到「' + mk.ay.name + '，' + mk.ay.year + '」—— 作者-年份对不上'; color = '#b3261e'; badCount++; }
+        else {
+          const t = TIER[r.tier] || { label: r.tier };
+          desc = '(' + mk.ay.name + ', ' + mk.ay.year + ') → 第 ' + (idx + 1) + ' 条：' + t.label;
+          color = r.tier === 'verified' ? '#1e7b52' : r.tier === 'fabricated' ? '#b3261e' : r.tier === 'metadata_conflict' ? '#9a6400' : '#5b6470';
+          if (r.tier === 'fabricated' || r.tier === 'metadata_conflict') badCount++;
+        }
+        rows += '<div class="cite"><span class="tag">(作者·年)</span><span style="color:' + color + '">' + esc(desc) + '</span></div>';
+        continue;
+      }
       for (const n of mk.nums){
         citeCount++;
         const r = lastResults[n - 1];
@@ -857,6 +929,16 @@ if (location.search.includes('demo=classic')){
   setTimeout(async () => {
     await run();
     $('para').value = '柏拉图在洞穴喻中说，教育不是把知识灌进灵魂[1]。康德认为先天综合判断如何可能，是批判哲学的总问题[2]。';
+    auditParagraph();
+  }, 400);
+}
+
+
+if (location.search.includes('demo=ay')){
+  loadSample();
+  setTimeout(async () => {
+    await run();
+    $('para').value = '有学者认为主观经验不可还原（Nagel, 1974）。柏拉图在《理想国》中讨论正义（柏拉图，1986）。康德认为先天综合判断是可能的（康德，2004）。';
     auditParagraph();
   }, 400);
 }
