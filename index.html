@@ -268,7 +268,9 @@ function titleSim(a, b){
 const YEAR_RE = /(1[89]\d{2}|20\d{2})/;
 function parseCitation(raw){
   const doi = extractDoi(raw);
-  const years = raw.match(/\b(1[89]\d{2}|20\d{2})\b/g) || [];
+  // 先挖掉 DOI，避免把 DOI 里的数字（如 -2016-4-369）当成出版年
+  const rawNoDoi = doi ? raw.split(doi).join(' ') : raw;
+  const years = rawNoDoi.match(/(?<![0-9])(1[89][0-9]{2}|20[0-9]{2})(?![0-9])/g) || [];
   const year = years.length ? years[years.length - 1] : null;
   let title = null;
   const bracket = raw.match(/[.。]\s*([^.[\]。]+?)\s*[[［]([A-Z]{1,2})[\]］]/);
